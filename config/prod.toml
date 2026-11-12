@@ -1,0 +1,35 @@
+profile = "prod"
+
+[data]
+n_samples = 12000
+seed = 2026
+train_split = 0.80
+val_split = 0.10
+missing_rate = 0.01
+
+[features]
+rolling_window = 7
+clip_quantile = 0.995
+scale = true
+
+[model]
+name = "logistic_balanced"
+learning_rate = 0.08
+epochs = 600
+l2 = 0.005
+threshold = 0.45
+
+[training]
+batch_size = 128
+early_stopping_patience = 40
+artifact_dir = "artifacts"
+
+[maintenance]
+psi_warn = 0.08
+psi_alert = 0.20
+recall_warn = 0.85
+retrain_interval_days = 14
+
+[paths]
+data_dir = "data"
+report_dir = "reports"

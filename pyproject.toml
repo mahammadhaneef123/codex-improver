@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-maint"
+version = "0.1.0"
+description = "Predictive maintenance model development workspace for Codex"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+codex-maint = "codex_maint.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["codex_maint*"]
