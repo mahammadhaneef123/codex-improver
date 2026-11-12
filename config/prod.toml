@@ -30,6 +30,14 @@ psi_alert = 0.20
 recall_warn = 0.85
 retrain_interval_days = 14
 
+[governance]
+min_recall = 0.85
+min_f1 = 0.80
+max_psi = 0.20
+required_approvals = 2
+audit_log = "artifacts/audit.jsonl"
+ownership_file = "config/maintainers.toml"
+
 [paths]
 data_dir = "data"
 report_dir = "reports"

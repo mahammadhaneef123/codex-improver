@@ -53,6 +53,16 @@ class MaintenanceConfig:
 
 
 @dataclass(slots=True)
+class GovernanceConfig:
+    min_recall: float = 0.75
+    min_f1: float = 0.7
+    max_psi: float = 0.25
+    required_approvals: int = 1
+    audit_log: str = "artifacts/audit.jsonl"
+    ownership_file: str = "config/maintainers.toml"
+
+
+@dataclass(slots=True)
 class AppConfig:
     profile: str = "dev"
     data: DataConfig = field(default_factory=DataConfig)
@@ -60,6 +70,7 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
+    governance: GovernanceConfig = field(default_factory=GovernanceConfig)
     paths: dict[str, str] = field(
         default_factory=lambda: {"data_dir": "data", "report_dir": "reports"}
     )
@@ -85,6 +96,7 @@ class AppConfig:
             model=_section(ModelConfig, raw.pop("model", {})),
             training=_section(TrainingConfig, raw.pop("training", {})),
             maintenance=_section(MaintenanceConfig, raw.pop("maintenance", {})),
+            governance=_section(GovernanceConfig, raw.pop("governance", {})),
             paths={str(k): str(v) for k, v in paths.items()},
         )
 
@@ -117,6 +129,18 @@ class AppConfig:
             raise ConfigError("maintenance PSI thresholds must satisfy 0 < warn <= alert")
         if self.maintenance.retrain_interval_days < 1:
             raise ConfigError("maintenance.retrain_interval_days must be >= 1")
+        if not 0.0 <= self.governance.min_recall <= 1.0:
+            raise ConfigError("governance.min_recall must be in [0, 1]")
+        if not 0.0 <= self.governance.min_f1 <= 1.0:
+            raise ConfigError("governance.min_f1 must be in [0, 1]")
+        if self.governance.max_psi <= 0:
+            raise ConfigError("governance.max_psi must be positive")
+        if self.governance.required_approvals < 1:
+            raise ConfigError("governance.required_approvals must be >= 1")
+        if not self.governance.audit_log.strip():
+            raise ConfigError("governance.audit_log must not be empty")
+        if not self.governance.ownership_file.strip():
+            raise ConfigError("governance.ownership_file must not be empty")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

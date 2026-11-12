@@ -29,6 +29,15 @@ config/*.toml
                     |                 health.assess  <----  maintenance queue
                     |                        |
                     +--------> evaluation.report.render_report -> reports/*.md
+                    |
+                    v
+          governance.evaluate_gate (policy + approvals)
+                    |
+          +---------+----------+
+          |                    |
+      promote              rollback
+          |                    |
+          +----> artifacts/latest.json + audit.jsonl
 ```
 
 ## Layers
@@ -87,6 +96,15 @@ status (`healthy` -> `watch` -> `degraded` -> `critical`).
 `scheduler.py` turns per-asset risk into a priority queue and computes the next
 retraining date.
 
+**Governance (`maintenance/ownership.py`, `maintenance/governance.py`)**
+`ownership.load` reads `config/maintainers.toml`, exposes the primary
+maintainer, area ownership and a deterministic on-call rotation.
+`governance.evaluate_gate` checks an artifact's stored metrics and drift
+against the `[governance]` policy plus the approval count and retrain window.
+`promote` and `rollback` perform atomic copies of the live bundle and append
+every action to an append-only JSONL audit log. Promotion is blocked unless
+the gate passed, the approvals are sufficient and an actor is named.
+
 **Orchestration (`workflow.py`, `cli.py`)**
 Workflows are plain functions returning JSON-serialisable summaries, so the
 CLI, tests and future services share one implementation.
@@ -99,4 +117,7 @@ CLI, tests and future services share one implementation.
 - **Reference bins over raw rows.** Small artifacts, explicit drift contract.
 - **Threshold as an artifact.** Changing the operating point requires no
   retraining, just a new bundle.
+- **Governed releases.** A bundle does not become live by existing; it must
+  pass a policy gate, carry recorded approvals and be promoted by a named
+  actor. Every promotion and rollback is auditable.
 - **Summaries as dicts.** Easy to print, assert on, log, or serve later.

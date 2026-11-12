@@ -11,8 +11,11 @@ from .evaluation import metrics as metrics_lib
 from .evaluation import report as report_lib
 from .features.pipeline import FeaturePipeline
 from .maintenance import drift as drift_lib
+from .maintenance import governance as governance_lib
 from .maintenance import health as health_lib
+from .maintenance import ownership as ownership_lib
 from .maintenance import scheduler as scheduler_lib
+from .maintenance.governance import GovernanceError
 from .models import artifacts, train as train_lib
 from .utils import io
 from .utils.timing import Stopwatch
@@ -110,6 +113,8 @@ def run_training(
             "train_seconds": result.train_seconds,
             "val_metrics": result.val_metrics,
             "test_metrics": test_metrics,
+            "test_drift": drift,
+            "test_health": health,
             "config": cfg.to_dict(),
         }
 
@@ -313,3 +318,173 @@ def generate_dataset(
         "path": str(path),
         "positive_rate": _positive_rate(records),
     }
+
+
+def _artifact_dir(cfg: AppConfig, base: Path) -> Path:
+    return io.resolve_path(cfg.training.artifact_dir, base)
+
+
+def _audit_path(cfg: AppConfig, base: Path) -> Path:
+    return io.resolve_path(cfg.governance.audit_log, base)
+
+
+def _resolve_input(value: str | Path, base: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute() or path.exists():
+        return path
+    candidate = base / path
+    return candidate if candidate.exists() else path
+
+
+def run_gate(
+    cfg: AppConfig,
+    *,
+    artifact_path: str | Path | None = None,
+    approvals: int = 0,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Evaluate the release policy against an artifact's stored results."""
+    base = Path(root) if root is not None else io.project_root()
+    path = (
+        _resolve_input(artifact_path, base)
+        if artifact_path is not None
+        else _artifact_dir(cfg, base) / "latest.json"
+    )
+    bundle = artifacts.load_bundle(path)
+    metadata = bundle.metadata
+
+    metrics = dict(metadata.get("test_metrics", {}))
+    drift = dict(metadata.get("test_drift", {}))
+    trained_at = str(metadata.get("created_at", ""))
+    retrain_due = (
+        scheduler_lib.retrain_due(trained_at, cfg.maintenance.retrain_interval_days)
+        if trained_at
+        else True
+    )
+
+    gate = governance_lib.evaluate_gate(
+        metrics,
+        drift,
+        cfg.governance,
+        approvals=approvals,
+        retrain_due=retrain_due,
+    )
+
+    return {
+        "artifact": str(path),
+        "trained_at": trained_at,
+        "retrain_due": retrain_due,
+        "metrics": metrics,
+        "drift": drift,
+        "gate": gate.to_dict(),
+    }
+
+
+def run_maintain(
+    cfg: AppConfig,
+    *,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Show who owns the model, its release readiness and recent releases."""
+    base = Path(root) if root is not None else io.project_root()
+    registry = ownership_lib.load(
+        io.resolve_path(cfg.governance.ownership_file, base)
+    )
+    audit_path = _audit_path(cfg, base)
+    latest = _artifact_dir(cfg, base) / "latest.json"
+
+    model: dict[str, Any] = {"artifact": str(latest), "ready": False}
+    gate: dict[str, Any] | None = None
+    if latest.exists():
+        status = run_gate(cfg, artifact_path=latest, approvals=0, root=base)
+        gate = status["gate"]
+        model = {
+            "artifact": status["artifact"],
+            "trained_at": status["trained_at"],
+            "retrain_due": status["retrain_due"],
+            "metrics": status["metrics"],
+            "drift": status["drift"],
+            "ready": bool(gate["approved"]),
+        }
+
+    return {
+        "status": "ok",
+        "stage": "maintain",
+        "ownership": registry.to_dict(),
+        "on_call": registry.on_call().to_dict(),
+        "governance": {
+            "required_approvals": cfg.governance.required_approvals,
+            "min_recall": cfg.governance.min_recall,
+            "min_f1": cfg.governance.min_f1,
+            "max_psi": cfg.governance.max_psi,
+            "audit_log": str(audit_path),
+        },
+        "model": model,
+        "gate": gate,
+        "audit": governance_lib.tail_events(audit_path, limit=5),
+    }
+
+
+def run_promote(
+    cfg: AppConfig,
+    *,
+    artifact: str | Path,
+    approvals: int,
+    actor: str,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Promote an approved artifact to `latest.json`."""
+    base = Path(root) if root is not None else io.project_root()
+    source = _resolve_input(artifact, base)
+
+    gate = run_gate(cfg, artifact_path=source, approvals=approvals, root=base)
+    if not gate["gate"]["approved"]:
+        failed = [
+            check["name"]
+            for check in gate["gate"]["checks"]
+            if not check["passed"]
+        ]
+        raise GovernanceError(f"release gate failed: {', '.join(failed)}")
+
+    target = _artifact_dir(cfg, base) / "latest.json"
+    result = governance_lib.promote(
+        source,
+        target,
+        _audit_path(cfg, base),
+        gate=gate["gate"],
+        approvals=approvals,
+        actor=actor,
+    )
+    return {"stage": "promote", **result}
+
+
+def run_rollback(
+    cfg: AppConfig,
+    *,
+    source: str | Path,
+    actor: str,
+    reason: str,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Restore a previous bundle to the live path."""
+    base = Path(root) if root is not None else io.project_root()
+    target = _artifact_dir(cfg, base) / "latest.json"
+    result = governance_lib.rollback(
+        _resolve_input(source, base),
+        target,
+        _audit_path(cfg, base),
+        actor=actor,
+        reason=reason,
+    )
+    return {"stage": "rollback", **result}
+
+
+def run_audit(
+    cfg: AppConfig,
+    *,
+    limit: int = 20,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    base = Path(root) if root is not None else io.project_root()
+    events = governance_lib.read_events(_audit_path(cfg, base), limit=limit)
+    return {"status": "ok", "stage": "audit", "count": len(events), "events": events}

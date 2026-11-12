@@ -56,6 +56,47 @@ score; performance is the other half. Status cut-offs:
 Any PSI at/above `psi_alert` forces `critical`, and a recall below
 `recall_warn` is always listed as a reason.
 
+## Release gate and ownership
+
+`config/maintainers.toml` names the primary maintainer, owned areas and the
+on-call rotation. `python main.py maintain` prints that plus the current release
+gate for `artifacts/latest.json` and the last audit events.
+
+A promotion must satisfy every check in `[governance]`:
+
+| Check | Meaning |
+| --- | --- |
+| `recall` | Test recall at or above `min_recall` |
+| `f1` | Test F1 at or above `min_f1` |
+| `drift` | Stored test max PSI at or below `max_psi` |
+| `retrain_window` | Retrain is not overdue |
+| `approvals` | Supplied approvals meet `required_approvals` |
+
+Promote only after the gate passes:
+
+```powershell
+python main.py maintain
+python main.py promote --artifact artifacts/model_<tag>.json `
+  --approvals 1 --actor "Haneef Syed"
+python main.py audit --limit 10
+```
+
+The approval count is recorded exactly as supplied; identity and independent
+review are process controls, not something this local tool can verify. The
+production profile requires two approvals, so add reviewers to the registry
+before promoting there.
+
+Rollback with a required reason:
+
+```powershell
+python main.py rollback --source artifacts/model_<previous-tag>.json `
+  --actor "Haneef Syed" --reason "drift regression"
+```
+
+`promote` and `rollback` write JSONL events to `artifacts/audit.jsonl`
+(timestamp, actor, source, target, approvals or reason). Treat that file as
+append-only and retain it with the released artifacts.
+
 ## Retraining checklist
 
 1. Confirm the drift alert is real (sensor outage vs genuine behaviour change).

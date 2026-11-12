@@ -13,6 +13,8 @@ from .config import AppConfig, ConfigError
 from .evaluation import report as report_lib
 from .features.pipeline import PipelineError
 from .logging_utils import configure, get_logger
+from .maintenance.governance import GovernanceError
+from .maintenance.ownership import OwnershipError
 from .models import available_models
 from .models.artifacts import ArtifactError
 from .models.base import ModelError
@@ -56,6 +58,30 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run-all", help="train, then monitor the fresh artifact")
     subparsers.add_parser("report", help="locate the latest generated report")
     subparsers.add_parser("models", help="list registered model factories")
+
+    subparsers.add_parser(
+        "maintain",
+        help="show maintainer ownership, release gate and recent releases",
+    )
+
+    promote = subparsers.add_parser(
+        "promote",
+        help="promote an artifact to latest.json once the gate passes",
+    )
+    promote.add_argument("--artifact", required=True, help="artifact bundle path")
+    promote.add_argument("--approvals", type=int, default=0)
+    promote.add_argument("--actor", default="maintainer")
+
+    rollback = subparsers.add_parser(
+        "rollback",
+        help="restore a previous artifact to latest.json",
+    )
+    rollback.add_argument("--source", required=True, help="previous bundle path")
+    rollback.add_argument("--actor", default="maintainer")
+    rollback.add_argument("--reason", required=True)
+
+    audit = subparsers.add_parser("audit", help="show the release audit log")
+    audit.add_argument("--limit", type=int, default=20)
     return parser
 
 
@@ -71,7 +97,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = _load_config(args.config)
         result = _dispatch(args, cfg)
-    except (ConfigError, PipelineError, ModelError, ArtifactError, ValueError, OSError) as exc:
+    except (
+        ConfigError,
+        PipelineError,
+        ModelError,
+        ArtifactError,
+        GovernanceError,
+        OwnershipError,
+        ValueError,
+        OSError,
+    ) as exc:
         logger.error("%s", exc)
         return 1
 
@@ -112,6 +147,30 @@ def _dispatch(args: argparse.Namespace, cfg: AppConfig) -> dict[str, Any]:
 
     if args.command == "report":
         return _latest_report(cfg, root)
+
+    if args.command == "maintain":
+        return workflow.run_maintain(cfg, root=root)
+
+    if args.command == "promote":
+        return workflow.run_promote(
+            cfg,
+            artifact=args.artifact,
+            approvals=args.approvals,
+            actor=args.actor,
+            root=root,
+        )
+
+    if args.command == "rollback":
+        return workflow.run_rollback(
+            cfg,
+            source=args.source,
+            actor=args.actor,
+            reason=args.reason,
+            root=root,
+        )
+
+    if args.command == "audit":
+        return workflow.run_audit(cfg, limit=args.limit, root=root)
 
     raise ConfigError(f"unsupported command: {args.command}")
 

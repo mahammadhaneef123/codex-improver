@@ -1,0 +1,10 @@
+# Machine-readable maintainer registry.
+# Keep MAINTAINERS.md in sync when this changes.
+
+rotation_days = 7
+
+[[maintainer]]
+handle = "Haneef Syed"
+role = "core maintainer"
+areas = ["model", "data", "release", "monitoring", "docs"]
+escalation_minutes = 30
